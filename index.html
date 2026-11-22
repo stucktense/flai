@@ -42,7 +42,7 @@ video{width:100%;margin-top:16px;border-radius:10px}
 </head>
 <body>
 <main>
-  <h1>Describe it. Watch it move.</h1>
+  <h1>AI.</h1>
   <p class="sub">Write a short idea, pick a style, and get a clean prompt for video AI.</p>
 
   <label for="idea">What happens in the video?</label>
@@ -83,7 +83,8 @@ video{width:100%;margin-top:16px;border-radius:10px}
 </main>
 
 <script>
-// Set this to your video service's endpoint. Expected reply: JSON like {"video_url": "https://..."}.
+// Set this to your server's base address, with no trailing slash (for example "https://video.yourdomain.com").
+// The page calls POST /generate, then checks GET /status/<job_id> until the video is ready.
 // For scenes after the first, the request also carries "previous_video_url" so a service can continue from the last frame.
 // Never put a secret API key in this file: anyone can read it. Use a small proxy/serverless function instead.
 const API_URL = "";
@@ -129,10 +130,18 @@ $("go").addEventListener("click", async () => {
     for(let i = 0; i < prompts.length; i++){
       status.textContent = `Generating scene ${i + 1} of ${prompts.length}. This can take a minute.`;
       const body = {prompt: prompts[i], previous_video_url: clips[i - 1] || null};
-      const res = await fetch(API_URL, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
-      if(!res.ok) throw new Error(`Scene ${i + 1}: the service returned ${res.status}`);
-      const data = await res.json();
-      if(!data.video_url) throw new Error(`Scene ${i + 1}: no video link in the reply`);
+      const res = await fetch(API_URL + "/generate", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
+      if(!res.ok) throw new Error(`Scene ${i + 1}: the server returned ${res.status}`);
+      const {job_id} = await res.json();
+      let data;
+      while(true){
+        await new Promise(r => setTimeout(r, 4000));
+        const st = await fetch(`${API_URL}/status/${job_id}`);
+        if(!st.ok) throw new Error(`Scene ${i + 1}: lost the job (${st.status})`);
+        data = await st.json();
+        if(data.status === "done") break;
+        if(data.status === "error") throw new Error(`Scene ${i + 1}: ${data.error}`);
+      }
       clips.push(data.video_url);
       if(i === 0){ $("player").hidden = false; playClip(0); }
     }
