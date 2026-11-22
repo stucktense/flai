@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prompt to Video</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;600;800&display=swap">
+<style>
+:root{--bg:#e9eef2;--ink:#14213d;--muted:#5b6785;--panel:#fff;--line:#c9d2de;--accent:#2f5bff;--accent-ink:#fff;--pick:#f2b705;--pick-ink:#14213d}
+@media (prefers-color-scheme:dark){:root{--bg:#10162b;--ink:#e9eef8;--muted:#9aa6c4;--panel:#192040;--line:#2b3562;--accent:#7b97ff;--accent-ink:#10162b}}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:16px/1.5 "Bricolage Grotesque",system-ui,sans-serif;padding:24px 16px 48px}
+main{max-width:640px;margin:0 auto}
+h1{font-size:clamp(2rem,7vw,3.2rem);line-height:1.05;font-weight:800;margin:24px 0 8px;letter-spacing:-.02em}
+p.sub{color:var(--muted);margin:0 0 24px}
+label,legend{font-weight:600;display:block;margin-bottom:8px}
+textarea,select{width:100%;font:inherit;color:var(--ink);background:var(--panel);border:1.5px solid var(--line);border-radius:10px;padding:12px}
+textarea{min-height:110px;resize:vertical}
+:is(textarea,select,button,input):focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+fieldset{border:0;padding:0;margin:20px 0}
+.styles{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.styles input{position:absolute;opacity:0}
+.styles span{display:block;text-align:center;padding:12px 6px;border:1.5px solid var(--line);border-radius:10px;background:var(--panel);cursor:pointer;font-weight:600}
+.styles input:checked+span{background:var(--pick);border-color:var(--pick);color:var(--pick-ink)}
+.styles input:focus-visible+span{outline:3px solid var(--accent);outline-offset:2px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px}
+.row label{margin-bottom:6px}
+button{font:inherit;font-weight:600;border:0;border-radius:10px;padding:14px 18px;cursor:pointer}
+#go{width:100%;background:var(--accent);color:var(--accent-ink);font-size:1.05rem}
+#go:disabled{opacity:.6;cursor:wait}
+.out{margin-top:24px;background:var(--panel);border:1.5px solid var(--line);border-radius:10px;padding:16px}
+.out h2{font-size:.95rem;margin:0 0 8px}
+#final{margin:0 0 12px;white-space:pre-wrap;word-break:break-word}
+#copy{background:transparent;color:var(--ink);border:1.5px solid var(--line);padding:8px 14px}
+#status{margin-top:16px;color:var(--muted)}
+.chk{display:flex;gap:8px;align-items:center;font-weight:400;margin:10px 0 0}
+video{width:100%;margin-top:16px;border-radius:10px}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main>
+  <h1>Describe it. Watch it move.</h1>
+  <p class="sub">Write a short idea, pick a style, and get a clean prompt for video AI.</p>
+
+  <label for="idea">What happens in the video?</label>
+  <textarea id="idea" placeholder="A fox running through a snowy forest at sunrise"></textarea>
+  <label class="chk"><input type="checkbox" id="long"> Long video: write one scene per line</label>
+
+  <fieldset>
+    <legend>Style</legend>
+    <div class="styles">
+      <label><input type="radio" name="style" value="photorealistic, shot on a cinema camera, natural lighting, real life footage" checked><span>Real life</span></label>
+      <label><input type="radio" name="style" value="anime style, hand-drawn look, vivid colors, cel shading"><span>Anime</span></label>
+      <label><input type="radio" name="style" value="3D animation, smooth stylized characters, polished render"><span>Animation</span></label>
+    </div>
+  </fieldset>
+
+  <div class="row">
+    <div><label for="cam">Camera</label>
+      <select id="cam">
+        <option value="slow tracking shot">Tracking shot</option>
+        <option value="static wide shot">Static wide</option>
+        <option value="slow push-in">Push in</option>
+        <option value="aerial drone shot">Aerial</option>
+        <option value="handheld close-up">Handheld close-up</option>
+      </select></div>
+    <div><label for="len">Length</label>
+      <select id="len"><option value="5">5 seconds</option><option value="10">10 seconds</option></select></div>
+  </div>
+
+  <button id="go" type="button">Generate video</button>
+  <div id="status" role="status" aria-live="polite"></div>
+
+  <section class="out" id="outbox" hidden>
+    <h2>Your prompt</h2>
+    <p id="final"></p>
+    <button id="copy" type="button">Copy prompt</button>
+  </section>
+  <video id="player" controls hidden></video>
+</main>
+
+<script>
+// Set this to your video service's endpoint. Expected reply: JSON like {"video_url": "https://..."}.
+// For scenes after the first, the request also carries "previous_video_url" so a service can continue from the last frame.
+// Never put a secret API key in this file: anyone can read it. Use a small proxy/serverless function instead.
+const API_URL = "";
+
+const $ = id => document.getElementById(id);
+
+function buildPrompts(){
+  const text = $("idea").value.trim();
+  if(!text) return [];
+  const scenes = $("long").checked ? text.split("\n").map(x => x.trim()).filter(Boolean) : [text];
+  const style = document.querySelector('input[name="style"]:checked').value;
+  return scenes.map((scene, i) => {
+    const link = i > 0 ? "continuing from the previous scene with the same characters and setting, " : "";
+    return `${link}${scene}, ${$("cam").value}, ${style}, ${$("len").value}`;
+  });
+}
+
+let clips = [], current = 0;
+function playClip(i){
+  current = i;
+  $("player").src = clips[i];
+  $("player").play().catch(() => {});
+}
+$("player").addEventListener("ended", () => { if(current + 1 < clips.length) playClip(current + 1); });
+
+$("go").addEventListener("click", async () => {
+  const prompts = buildPrompts();
+  const status = $("status");
+  if(!prompts.length){ status.textContent = "Add a short description first."; $("idea").focus(); return; }
+
+  $("final").textContent = prompts.map((p, i) => prompts.length > 1 ? `Scene ${i + 1}: ${p}` : p).join("\n\n");
+  $("outbox").hidden = false;
+  $("player").hidden = true;
+  clips = [];
+
+  if(!API_URL){
+    status.textContent = "Prompts ready. Add a video API address in index.html (API_URL) to generate here, or copy them into any video AI tool, one scene at a time.";
+    return;
+  }
+
+  $("go").disabled = true;
+  try{
+    for(let i = 0; i < prompts.length; i++){
+      status.textContent = `Generating scene ${i + 1} of ${prompts.length}. This can take a minute.`;
+      const body = {prompt: prompts[i], previous_video_url: clips[i - 1] || null};
+      const res = await fetch(API_URL, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
+      if(!res.ok) throw new Error(`Scene ${i + 1}: the service returned ${res.status}`);
+      const data = await res.json();
+      if(!data.video_url) throw new Error(`Scene ${i + 1}: no video link in the reply`);
+      clips.push(data.video_url);
+      if(i === 0){ $("player").hidden = false; playClip(0); }
+    }
+    status.textContent = clips.length > 1 ? `Done. ${clips.length} scenes play back to back.` : "Done.";
+  }catch(err){
+    status.textContent = "Could not generate: " + err.message + ". Check the API address and try again.";
+  }finally{
+    $("go").disabled = false;
+  }
+});
+
+$("copy").addEventListener("click", async () => {
+  try{
+    await navigator.clipboard.writeText($("final").textContent);
+    $("copy").textContent = "Copied";
+  }catch(e){
+    $("copy").textContent = "Select and copy manually";
+  }
+  setTimeout(() => $("copy").textContent = "Copy prompt", 1800);
+});
+</script>
+</body>
+</html>
